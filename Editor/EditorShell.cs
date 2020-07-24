@@ -17,7 +17,7 @@ namespace MS.Shell.Editor{
                 #elif UNITY_EDITOR_OSX
                 string app = "bash";
                 #else
-                string app = "unsupport-platform"
+                string app = "unsupport-platform";
                 #endif
                 return app;
             }
@@ -79,7 +79,7 @@ namespace MS.Shell.Editor{
         }
         public static Task Execute(string cmd,Options options = null){
             Task task = new Task();
-            System.Threading.ThreadPool.QueueUserWorkItem(delegate(object state) {
+            System.Threading.Tasks.Task.Run(() => {
                 Process p = null;
                 try{
                     ProcessStartInfo start = new ProcessStartInfo(shellApp);
@@ -130,6 +130,10 @@ namespace MS.Shell.Editor{
                     };
                     
                     do{
+                        if (options.cancellationToken.IsCancellationRequested)
+                        {
+                            break;
+                        }
                         string line = p.StandardOutput.ReadLine();
                         if(line == null){
                             break;
@@ -142,6 +146,10 @@ namespace MS.Shell.Editor{
 
                     }while(true);
                     while(true){
+                        if (options.cancellationToken.IsCancellationRequested)
+                        {
+                            break;
+                        }
                         string error = p.StandardError.ReadLine();
                         if(string.IsNullOrEmpty(error)){
                             break;
@@ -150,12 +158,22 @@ namespace MS.Shell.Editor{
                             task.FeedLog(LogType.Error,error);
                         });
                     }
-                    p.WaitForExit();
-                    var exitCode = p.ExitCode;
-                    p.Close();
-                    Enqueue(()=>{
-                        task.FireDone(exitCode);
-                    });
+                    if (options.cancellationToken.IsCancellationRequested)
+                    {
+                        p.Close();
+                        Enqueue(() => {
+                            task.FireDone(p.ExitCode);
+                        });
+                    }
+                    else
+                    {
+                        p.WaitForExit();
+                        var exitCode = p.ExitCode;
+                        p.Close();
+                        Enqueue(()=>{
+                            task.FireDone(exitCode);
+                        });
+                    }
                 }catch(System.Exception e){
                     UnityEngine.Debug.LogException(e);
                     if(p != null){
@@ -166,7 +184,7 @@ namespace MS.Shell.Editor{
                         task.FireDone(-1);
                     });
                 }
-            });
+            }, options?.cancellationToken ?? System.Threading.CancellationToken.None);
             return task;
         }
 
@@ -174,6 +192,7 @@ namespace MS.Shell.Editor{
             public System.Text.Encoding encoding = System.Text.Encoding.UTF8;
             public string workDirectory = "./";
             public Dictionary<string,string> environmentVars = new Dictionary<string,string>();
+            public System.Threading.CancellationToken cancellationToken = System.Threading.CancellationToken.None;
         }
 
 
